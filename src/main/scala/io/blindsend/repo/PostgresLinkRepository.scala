@@ -1,44 +1,44 @@
 package io.blindsend.repo
 
-import java.time.LocalDateTime
-import java.sql._
+import java.sql.Timestamp
+import cats.effect.IO
+import doobie._
+import doobie.implicits._
+import doobie.implicits.javasql._ // explicit import needed by doobie (see v0.8.8 release notes)
+import doobie.util.ExecutionContexts
 import io.blindsend.config.Postgres
-
 
 object PostgresLinkRepository {
 
-  def apply(conf: Postgres) = new LinkRepository {
+  def apply(conf: Postgres): LinkRepository = new LinkRepository {
 
-    val conn:Connection = {
-      Class.forName("org.postgresql.Driver")
-      val url = s"jdbc:postgresql://${conf.host}/${conf.db}"
-      val user = conf.user
-      val password = conf.pass
-      DriverManager.getConnection(url, user, password)
-    }
+    implicit val cs = IO.contextShift(ExecutionContexts.synchronous)
 
-    override def getExpiredFileIds(currentDateTime: LocalDateTime): List[String] = {
-      getFileIds(currentDateTime, "links_request") ++ getFileIds(currentDateTime, "links_send")
-    }
+    val xa = Transactor.fromDriverManager[IO](
+      driver = "org.postgresql.Driver",
+      url = s"jdbc:postgresql://${conf.host}/${conf.db}",
+      user = conf.user,
+      pass = conf.pass
+    )
 
-    private def getFileIds(currentDateTime: LocalDateTime, dbt: String): List[String] = {
-      val statement = conn.createStatement()
-      val resultSet = statement.executeQuery(s"SELECT file_id FROM ${dbt} WHERE created + life_expectancy * interval '1 hour' <= '${currentDateTime}';")
-      new Iterator[String] {
-        def hasNext = resultSet.next()
-        def next() = resultSet.getString("file_id")
-      }.toList
-    }
+    override def getExpiredFileIds(currentDateTime: Timestamp): IO[List[String]] = for {
+      reqIds <- getFileIds(currentDateTime, "links_request")
+      sendIds <- getFileIds(currentDateTime, "links_send")
+    } yield reqIds ++ sendIds
 
-    override def deleteExpiredLinks(currentDateTime: LocalDateTime): Unit = {
-      deleteLinks(currentDateTime,"links_request")
-      deleteLinks(currentDateTime,"links_send")
-    }
+    private def getFileIds(currentDateTime: Timestamp, dbt: String): IO[List[String]] =
+      (fr"select file_id from" ++ Fragment.const(dbt) ++
+        fr"WHERE created + life_expectancy * interval '1 hour' <= $currentDateTime"
+        ).query[String].to[List].transact(xa)
 
-    private def deleteLinks(currentDateTime: LocalDateTime, dbt: String) = {
-      val statement = conn.createStatement()
-      statement.executeUpdate(s"DELETE FROM ${dbt} WHERE created + life_expectancy * interval '1 hour' <= '${currentDateTime}';;")
-    }
+    override def deleteExpiredLinks(currentDateTime: Timestamp): IO[Int] = for {
+      reqDel <- deleteLinks(currentDateTime, "links_request")
+      sendDel <- deleteLinks(currentDateTime, "links_send")
+    } yield reqDel + sendDel
 
+    private def deleteLinks(currentDateTime: Timestamp, dbt: String): IO[Int] =
+      (fr"delete from" ++ Fragment.const(dbt) ++
+        fr"WHERE created + life_expectancy * interval '1 hour' <= $currentDateTime"
+        ).update.run.transact(xa)
   }
 }

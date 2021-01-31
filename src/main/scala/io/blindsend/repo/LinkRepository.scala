@@ -1,10 +1,11 @@
 package io.blindsend.repo
 
-import java.time.LocalDateTime
+import java.sql.Timestamp
+import cats.effect.IO
 
 trait LinkRepository {
 
-  def getExpiredFileIds(current: LocalDateTime): List[String]
+  def getExpiredFileIds(current: Timestamp): IO[List[String]]
 
-  def deleteExpiredLinks(before: LocalDateTime)
+  def deleteExpiredLinks(before: Timestamp): IO[Int]
 }
