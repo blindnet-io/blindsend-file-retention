@@ -1,4 +1,4 @@
-package io.blindsend.repo
+package io.blindsend.links
 
 import java.sql.Timestamp
 import cats.effect.IO
