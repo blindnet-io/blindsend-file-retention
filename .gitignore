@@ -11,3 +11,4 @@ metals.sbt
 account.json
 *.conf
 .bsp/
+.vscode
